@@ -2,22 +2,26 @@ import streamlit as st
 import pandas as pd
 import warnings
 from io import BytesIO
+import re
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # ================= CONFIG =================
 ROWS_TO_DELETE = 10
 TARGET_SHEET = "Draft Roll Control Chart"
-USE_COLS = "B:F"
 FIXED_COLUMNS = ["B", "C", "D", "E", "F"]
+NEW_COLUMN = "Panchayat Name"
 # =========================================
 
-st.set_page_config(page_title="Draft Roll Control Chart Merger", layout="centered")
+st.set_page_config(
+    page_title="Draft Roll Control Chart Merger",
+    layout="centered"
+)
 
 st.title("📊 Draft Roll Control Chart – Excel Merger")
 st.markdown("""
 Upload **multiple A1 Excel files**.  
-The app will clean, filter, and merge them into **one Excel file**.
+Panchayat name will be **auto-detected from filename** and added as a new column.
 """)
 
 uploaded_files = st.file_uploader(
@@ -25,6 +29,15 @@ uploaded_files = st.file_uploader(
     type=["xlsx"],
     accept_multiple_files=True
 )
+
+def extract_panchayat_name(filename):
+    """
+    Extracts text before '-Format-A1'
+    Example:
+    Aamalva-Format-A1_(Name of PRI)_SEC_Rajasthan.xlsx -> Aamalva
+    """
+    match = re.match(r"(.*?)-Format-A1", filename)
+    return match.group(1).strip() if match else "UNKNOWN"
 
 if uploaded_files:
     st.success(f"✅ {len(uploaded_files)} file(s) uploaded")
@@ -37,10 +50,10 @@ if uploaded_files:
         with st.spinner("Processing files..."):
 
             for file in uploaded_files:
-                st.write(f"➡ Processing **{file.name}**")
+                panchayat = extract_panchayat_name(file.name)
+                st.write(f"➡ Processing **{file.name}** → **{panchayat}**")
 
                 try:
-                    # Read full sheet first (no header)
                     df = pd.read_excel(
                         file,
                         sheet_name=TARGET_SHEET,
@@ -54,18 +67,19 @@ if uploaded_files:
                 # Remove top 10 rows
                 df = df.iloc[ROWS_TO_DELETE:]
 
-                # Keep only columns B–F (index 1 to 5)
+                # Keep only columns B–F
                 df = df.iloc[:, 1:6]
-
-                # Force fixed columns
                 df.columns = FIXED_COLUMNS
 
-                # Keep only rows where B–F has data
+                # Drop empty rows
                 df = df.dropna(how="all", subset=FIXED_COLUMNS)
 
                 if df.empty:
                     st.warning(f"⚠ No valid data in {file.name}")
                     continue
+
+                # Add Panchayat column
+                df.insert(0, NEW_COLUMN, panchayat)
 
                 rows = len(df)
                 total_rows += rows
@@ -79,7 +93,7 @@ if uploaded_files:
 
         final_df = pd.concat(merged_rows, ignore_index=True)
 
-        # Write to memory (NO FILE LOCK)
+        # Write output to memory
         output = BytesIO()
         final_df.to_excel(output, index=False)
         output.seek(0)
