@@ -20,8 +20,9 @@ st.set_page_config(
 st.title("📊 Draft Roll Control Chart – Excel Merger")
 st.markdown("""
 Upload **multiple A1 Excel files**.  
-✔ Draft Roll sheet is auto-detected  
-✔ Panchayat name is auto-added from filename  
+✔ Cloud-safe  
+✔ Auto-detect Draft Roll sheet  
+✔ Panchayat name from filename  
 """)
 
 uploaded_files = st.file_uploader(
@@ -31,11 +32,6 @@ uploaded_files = st.file_uploader(
 )
 
 def extract_panchayat_name(filename):
-    """
-    Extracts Panchayat name from filename
-    Example:
-    Aamalva-Format-A1_(Name of PRI)_SEC_Rajasthan.xlsx → Aamalva
-    """
     match = re.match(r"(.*?)-Format-A1", filename)
     return match.group(1).strip() if match else "UNKNOWN"
 
@@ -53,17 +49,15 @@ if uploaded_files:
                 panchayat = extract_panchayat_name(file.name)
                 st.write(f"➡ Processing **{file.name}** → **{panchayat}**")
 
-                # -------- AUTO DETECT SHEET --------
-                try:
-                    xls = pd.ExcelFile(file, engine="openpyxl")
-                except Exception as e:
-                    st.warning(f"⚠ Cannot read file: {file.name}")
-                    continue
+                # 🔴 RESET POINTER (CRITICAL FOR CLOUD)
+                file.seek(0)
+                xls = pd.ExcelFile(file, engine="openpyxl")
 
+                # Detect Draft Roll sheet
                 target_sheet = None
                 for sheet in xls.sheet_names:
-                    sheet_clean = sheet.lower().replace("\u00a0", " ").strip()
-                    if "draft" in sheet_clean and "roll" in sheet_clean:
+                    clean = sheet.lower().replace("\u00a0", " ").strip()
+                    if "draft" in clean and "roll" in clean:
                         target_sheet = sheet
                         break
 
@@ -71,7 +65,8 @@ if uploaded_files:
                     st.warning(f"⚠ Draft Roll sheet not found: {file.name}")
                     continue
 
-                # -------- READ SHEET --------
+                # 🔴 RESET POINTER AGAIN BEFORE READ
+                file.seek(0)
                 df = pd.read_excel(
                     file,
                     sheet_name=target_sheet,
@@ -79,18 +74,17 @@ if uploaded_files:
                     engine="openpyxl"
                 )
 
-                # -------- CLEAN DATA --------
-                df = df.iloc[ROWS_TO_DELETE:]        # remove top rows
-                df = df.iloc[:, 1:6]                 # columns B–F
+                # Clean data
+                df = df.iloc[ROWS_TO_DELETE:]
+                df = df.iloc[:, 1:6]
                 df.columns = FIXED_COLUMNS
-
                 df = df.dropna(how="all", subset=FIXED_COLUMNS)
 
                 if df.empty:
                     st.warning(f"⚠ No valid rows in {file.name}")
                     continue
 
-                # -------- ADD PANCHAYAT --------
+                # Add Panchayat column
                 df.insert(0, NEW_COLUMN, panchayat)
 
                 rows = len(df)
@@ -105,7 +99,6 @@ if uploaded_files:
 
         final_df = pd.concat(merged_rows, ignore_index=True)
 
-        # -------- EXPORT --------
         output = BytesIO()
         final_df.to_excel(output, index=False)
         output.seek(0)
@@ -115,7 +108,7 @@ if uploaded_files:
         st.metric("📁 Files Processed", len(uploaded_files))
 
         st.download_button(
-            label="⬇ Download Merged Excel",
+            "⬇ Download Merged Excel",
             data=output,
             file_name="MERGED_DRAFT_ROLL_CONTROL_CHART.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
