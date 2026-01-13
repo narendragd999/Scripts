@@ -8,7 +8,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 # ================= CONFIG =================
 ROWS_TO_DELETE = 10
-TARGET_SHEET = "Draft Roll Control Chart"
 FIXED_COLUMNS = ["B", "C", "D", "E", "F"]
 NEW_COLUMN = "Panchayat Name"
 # =========================================
@@ -21,7 +20,8 @@ st.set_page_config(
 st.title("📊 Draft Roll Control Chart – Excel Merger")
 st.markdown("""
 Upload **multiple A1 Excel files**.  
-Panchayat name will be **auto-detected from filename** and added as a new column.
+✔ Draft Roll sheet is auto-detected  
+✔ Panchayat name is auto-added from filename  
 """)
 
 uploaded_files = st.file_uploader(
@@ -32,9 +32,9 @@ uploaded_files = st.file_uploader(
 
 def extract_panchayat_name(filename):
     """
-    Extracts text before '-Format-A1'
+    Extracts Panchayat name from filename
     Example:
-    Aamalva-Format-A1_(Name of PRI)_SEC_Rajasthan.xlsx -> Aamalva
+    Aamalva-Format-A1_(Name of PRI)_SEC_Rajasthan.xlsx → Aamalva
     """
     match = re.match(r"(.*?)-Format-A1", filename)
     return match.group(1).strip() if match else "UNKNOWN"
@@ -53,32 +53,44 @@ if uploaded_files:
                 panchayat = extract_panchayat_name(file.name)
                 st.write(f"➡ Processing **{file.name}** → **{panchayat}**")
 
+                # -------- AUTO DETECT SHEET --------
                 try:
-                    df = pd.read_excel(
-                        file,
-                        sheet_name=TARGET_SHEET,
-                        header=None,
-                        engine="openpyxl"
-                    )
-                except Exception:
-                    st.warning(f"⚠ Sheet not found: {file.name}")
+                    xls = pd.ExcelFile(file, engine="openpyxl")
+                except Exception as e:
+                    st.warning(f"⚠ Cannot read file: {file.name}")
                     continue
 
-                # Remove top 10 rows
-                df = df.iloc[ROWS_TO_DELETE:]
+                target_sheet = None
+                for sheet in xls.sheet_names:
+                    sheet_clean = sheet.lower().replace("\u00a0", " ").strip()
+                    if "draft" in sheet_clean and "roll" in sheet_clean:
+                        target_sheet = sheet
+                        break
 
-                # Keep only columns B–F
-                df = df.iloc[:, 1:6]
+                if not target_sheet:
+                    st.warning(f"⚠ Draft Roll sheet not found: {file.name}")
+                    continue
+
+                # -------- READ SHEET --------
+                df = pd.read_excel(
+                    file,
+                    sheet_name=target_sheet,
+                    header=None,
+                    engine="openpyxl"
+                )
+
+                # -------- CLEAN DATA --------
+                df = df.iloc[ROWS_TO_DELETE:]        # remove top rows
+                df = df.iloc[:, 1:6]                 # columns B–F
                 df.columns = FIXED_COLUMNS
 
-                # Drop empty rows
                 df = df.dropna(how="all", subset=FIXED_COLUMNS)
 
                 if df.empty:
-                    st.warning(f"⚠ No valid data in {file.name}")
+                    st.warning(f"⚠ No valid rows in {file.name}")
                     continue
 
-                # Add Panchayat column
+                # -------- ADD PANCHAYAT --------
                 df.insert(0, NEW_COLUMN, panchayat)
 
                 rows = len(df)
@@ -93,13 +105,12 @@ if uploaded_files:
 
         final_df = pd.concat(merged_rows, ignore_index=True)
 
-        # Write output to memory
+        # -------- EXPORT --------
         output = BytesIO()
         final_df.to_excel(output, index=False)
         output.seek(0)
 
         st.success("✅ Merge completed successfully")
-
         st.metric("📊 Total Rows Merged", total_rows)
         st.metric("📁 Files Processed", len(uploaded_files))
 
